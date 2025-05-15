@@ -1,0 +1,30 @@
+[project]
+name = "mj-rag"
+version = "0.1.0"
+description = "Complete and unopionated RAG algorithm for LLM"
+readme = "README.md"
+authors = [
+    { name = "Matt Jeff", email = "jefcolbi@gmail.com" }
+]
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "litellm>=1.68.1",
+    "pyparsing>=3.2.3",
+    "sweetagent",
+]
+
+[project.optional-dependencies]
+milvus = [
+    "pymilvus[bulk_writer,model]"
+]
+
+tests = [
+    "python-decouple"
+]
+
+[project.scripts]
+mj-rag = "mj_rag:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

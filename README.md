@@ -1,9 +1,3 @@
-I’ve inserted comprehensive Google-style docstrings throughout the **mj\_rag\_algorithm.py** source and opened it in the canvas so you can review or tweak anything you like.
-
-Below is a first-pass **README.md** that explains what the project does, how to install it, and how to use the newly documented classes. Feel free to let me know if you’d like it revised or placed in the canvas as a separate file.
-
----
-
 # MJ-RAG — Markdown-to-RAG Pipeline
 
 MJ-RAG is a **retrieval-augmented-generation (RAG)** toolkit that turns raw Markdown (or scraped HTML converted to Markdown) into a query-ready knowledge base.

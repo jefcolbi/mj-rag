@@ -1,3 +1,20 @@
+"""Core implementation of the *MJ‑RAG* retrieval‑augmented‑generation pipeline.
+
+This module contains two public objects:
+
+* ``SectionAnswerMode`` – an :class:`enum.Enum` that lists the different
+  post‑processing strategies that can be applied to the raw sections returned
+  by the vector database.
+* :class:`MJRagAlgorithm` – the high‑level façade class that orchestrates the
+  ingestion and querying workflow.  It coordinates four pluggable service
+  interfaces (vector DB, SQL/metadata DB, LLM, and logging).
+
+The code follows the *single‑responsibility principle*: each helper method does
+exactly one thing (e.g. splitting content, querying the VDB, combining LLM
+answers).  Public methods are documented and safe for external use; private
+helpers (prefixed with an underscore) are intended for internal use only.
+
+"""
 import json
 from typing import List, Tuple, Optional
 
@@ -13,6 +30,30 @@ from enum import Enum
 
 
 class SectionAnswerMode(Enum):
+    """Enumeration of high‑level answer‑generation strategies.
+
+    When a user question is mapped to one or more matching *sections* in the
+    vector database, we still need to decide *how* to transform those raw
+    sections into the final answer string.  ``SectionAnswerMode`` captures the
+    available strategies:
+
+    Attributes
+    ----------
+    FIRST_BEST_RAW
+        Return the single best‑scoring section as‑is (no LLM‑post‑processing).
+    FIRST_BEST_SUMMARY
+        Summarise the single best section with the LLM before returning it.
+    TOP_K_RAW
+        Return the *k* best sections concatenated, unmodified.
+    TOP_K_COMBINE
+        Let the LLM combine the *k* best sections into a coherent answer.
+    TOP_K_SUMMARY
+        Summarise each of the *k* best sections individually and concatenate
+        the summaries.
+    TOP_K_RESTRANSCRIPT
+        Ask the LLM to produce a *retranscript* (rewritten transcript) that
+        stitches the *k* best sections together verbatim but in improved prose.
+    """
     FIRST_BEST_RAW = "first_best_raw"  # return the "best section" without passing it to llm
     FIRST_BEST_SUMMARY = "first_best_summary"  # ask the llm to resume the "best section"
     TOP_K_RAW = "top_raw"  # return the "best sections" without passing it to llm

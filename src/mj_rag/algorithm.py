@@ -63,6 +63,38 @@ class SectionAnswerMode(Enum):
 
 
 class MJRagAlgorithm:
+    """High‑level façade that implements the MJ‑RAG workflow.
+
+    The class is **service‑oriented**: external dependencies are injected at
+    construction time so that the core logic remains testable and free of
+    side‑effects.
+
+    Parameters
+    ----------
+    work_title : str
+        Human‑readable identifier for the *corpus* being processed.  Acts as a
+        namespace for the underlying databases.
+    vector_db_service : VectorDBServiceInterface
+        Service responsible for storage and similarity search over sentence
+        embeddings and section headers.
+    llm_service : LLMServiceInterface
+        Large‑language‑model backend used for classification, summarisation and
+        answer generation.
+    sql_db_service : SqlDBServiceInterface, optional
+        Relational/metadata store used to persist the raw markdown content of
+        each section.  A simple JSON‑backed implementation is used by default
+        for local development.
+    logging_service : LoggingServiceInterface, optional
+        Structured logger.  If not provided, :py:meth:`get_default_logging_service`
+        is called to create a colourful console logger.
+    add_hierachized_titles : bool, default ``True``
+        Whether to generate *virtual* section headers that include their parent
+        hierarchy (e.g. ``"Parent – Child – Subchild"``) to increase recall
+        during header‑based search.
+    **kwargs
+        Forward‑compatibility hook for subclasses; currently unused.
+    """
+
     rgx_sentence_limiter = re.compile(r"([\.\?!]+[\n ]+)")
     rgx_only_space = re.compile(r"^[\s\n]*$")
     rgx_md_point = re.compile(r"- (.*)\n")
@@ -85,6 +117,7 @@ class MJRagAlgorithm:
         self.add_hierarchized_titles: bool = add_hierachized_titles
 
     def get_default_logging_service(self) -> LoggingServiceInterface:
+        """Return a stdio when the caller did not supply one."""
         log_format: str = "[%(asctime)s] [%(levelname)s]  %(message)s - %(pathname)s#L%(lineno)s"
         log_date_format: str = "%d/%b/%Y %H:%M:%S"
         console = logging.getLogger(self.work_title)
@@ -101,13 +134,32 @@ class MJRagAlgorithm:
         return console
 
     def get_default_sql_db_service(self) -> SqlDBServiceInterface:
+        """Return a lightweight JSON‑backed metadata store for local use."""
         from mj_rag.dummy import JsonSqlDBService
         return JsonSqlDBService()
 
     def save_text_in_databases(self, markdown_content: str):
+        """Persist *markdown_content* into both the vector and SQL stores."""
         self.save_text_as_set_in_vdb(markdown_content)
+        self.save_text_as_titles_in_vdb(markdown_content)
 
     def save_text_as_set_in_vdb(self, markdown_content: str, count: int = 5):
+        """Split *markdown_content* into windows of *count* sentences and store them.
+
+        The text is first tokenised by naïvely splitting on punctuation (see
+        :pydataattr:`rgx_sentence_limiter`).  Sliding windows of *count*
+        sentences (with 1 sentence overlap) are then embedded and up‑serted into the
+        *sentence‑set* collection for the current *work_title*.
+
+        Parameters
+        ----------
+        markdown_content : str
+            Raw markdown article.
+        count : int, default 5
+            Window size in sentences.  Each VDB document will contain roughly
+            this many sentences.
+        """
+
         # we make sure the collection for the work exist
         self.vector_db_service.create_collection_for_sentences_set(self.work_title)
 
@@ -137,6 +189,20 @@ class MJRagAlgorithm:
         self.vector_db_service.insert_sentences_set(self.work_title, sentences_set)
 
     def save_text_as_titles_in_vdb(self, markdown_content: str):
+        """Extract headed sections from *markdown_content* and index their titles.
+
+        This method performs three steps:
+
+        1. **Split** – use the LLM to identify the hierarchical structure of
+           the article and produce a tree of sections (see
+           :py:meth:`split_content_with_llm`).
+        2. **Persist raw content** – each section (and its parent trace) is
+           inserted into the SQL store so we can recover the original
+           paragraphs later.
+        3. **Persist titles** – finally, we push (header, embedding) pairs to
+           the vector DB.  These are later used for header‑based retrieval.
+        """
+
         # make sure the collection for this work is created
         self.vector_db_service.create_collection_for_section_headers(self.work_title)
 
@@ -159,6 +225,18 @@ class MJRagAlgorithm:
 
     def get_direct_answer(self, question: str, use_alternates: bool = False,
                           use_hypothetical_answers: bool = False) -> str:
+        """Return a short direct answer to *question*.
+
+        The method performs an *embedding‑only* lookup against the *sentence‑set*
+        collection and passes the returned snippets, together with the user
+        question, to the LLM for answer synthesis.
+
+        When *use_alternates* is ``True``, paraphrases of the question are also
+        embedded in order to increase recall.  *use_hypothetical_answers*
+        injects a handful of synthetic answers as additional query vectors; this
+        trick can surface sentences that contain confirming evidence rather than
+        re‑phrased questions.
+        """
         if use_alternates:
             alternates = self._generate_question_alternates(question)
         else:
@@ -193,6 +271,11 @@ class MJRagAlgorithm:
                                           mode: SectionAnswerMode = SectionAnswerMode.TOP_K_COMBINE,
                                           known_document_titles: List[str] = None,
                                           top_k: int =5) -> str:
+        """Return an answer by searching *section_header* in the *header* collection.
+
+        This helper is used when the caller already knows (or can guess) the
+        relevant section title.
+        """
         if use_alternates:
             alternates = self._generate_section_alternates(section_header)
             if known_document_titles:
@@ -217,6 +300,7 @@ class MJRagAlgorithm:
                                           mode: SectionAnswerMode = SectionAnswerMode.TOP_K_COMBINE,
                                           known_document_titles: List[str] = None,
                                           top_k: int =5):
+        """Infer probable section headers *from* the question, then delegate to header search."""
         possible_headers = self._generate_possible_headers_from_question(question)
         if use_alternates:
             alternates = self._generate_section_alternates(possible_headers[0])
@@ -238,6 +322,7 @@ class MJRagAlgorithm:
 
     def get_answer(self, question:str, top_k: int = 5, return_raw: bool = False,
                    mode: Optional[SectionAnswerMode] = None):
+        """One‑stop shop: decide the best strategy and return an answer to *question*."""
         classified_answer = self._classify_answer_for_question(question)
         self.logging_service.info(f"{classified_answer = }")
 
@@ -280,6 +365,11 @@ class MJRagAlgorithm:
         pass
 
     def check_if_answer_is_correct(self, question: str, answer: str) -> bool:
+        """Ask the LLM to sanity‑check *answer* against *question*.
+
+        Returns ``True`` if the LLM replies with *yes*, ``False`` otherwise.
+        """
+
         msg_content = f"""We are working on a document which the document is turning around '{self.work_title}'
 
 The user asked: {question}
@@ -457,6 +547,12 @@ Answer with the following format:
         return points
 
     def _generate_hypothetical_answers(self, question: str) -> List[str]:
+        """Generate synthetic answers that *could* answer *question*.
+
+        This scoring‑trick sometimes surfaces paragraphs that contain facts but
+        not the exact phrasing of the query.
+        """
+
         msg_content = f"""Generate few hypothetical answers with the same meaning 
 for this question: {question}
 
@@ -507,6 +603,12 @@ Answer with the following format:
         return json.loads(results.as_list()[0][0])
 
     def split_content_with_llm(self, content: str, title: str = None) -> Tuple[str, List[dict]]:
+        """Ask the LLM to parse *content* into a *header/content* JSON tree.
+
+        Results are cached on disk (see :py:meth:`get_cached_content_json_tree`) so
+        that repeated ingestion of the same document does not incur extra token
+        costs.
+        """
         hash, res = self.get_cached_content_json_tree(content)
         if res:
             return hash, res

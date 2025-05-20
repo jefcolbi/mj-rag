@@ -1,4 +1,4 @@
-# MJ-RAG — Markdown-to-RAG Pipeline
+# MJ-RAG
 
 MJ-RAG is a **retrieval-augmented-generation (RAG)** toolkit that turns raw Markdown (or scraped HTML converted to Markdown) into a query-ready knowledge base.
 

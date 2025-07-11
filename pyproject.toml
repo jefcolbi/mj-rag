@@ -9,6 +9,8 @@ authors = [
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "litellm>=1.68.1",
+    "pymupdf>=1.26.3",
+    "pymupdf4llm>=0.0.26",
     "pyparsing>=3.2.3",
 ]
 

@@ -1,4 +1,6 @@
-from mj_rag.interfaces import SqlDBServiceInterface
+from typing import List
+
+from mj_rag.interfaces import SqlDBServiceInterface, EmbeddingServiceInterface
 import json
 from pathlib import Path
 
@@ -48,3 +50,16 @@ class JsonSqlDBService(SqlDBServiceInterface):
             return data[str(new_id)]['content']
         else:
             raise KeyError(f"{new_id} not found in data")
+
+
+class DummyEmbeddingService(EmbeddingServiceInterface):
+
+    def encode_documents(self, documents: List[str]) -> List[List[List[float]]]:
+        return [
+            [[0.0]] for i in range(len(documents))
+        ]
+
+    def encode_queries(self, queries: List[str]) -> List[List[List[float]]]:
+        return [
+            [[0.0]] for i in range(len(queries))
+        ]

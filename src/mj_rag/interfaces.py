@@ -3,6 +3,8 @@ import re
 
 
 class EmbeddingServiceInterface(Protocol):
+    dimensions: int
+    model_name: str
 
     def encode_documents(self, documents: List[str]) -> List[List[List[float]]]:
         raise NotImplementedError
@@ -24,6 +26,7 @@ class SqlDBServiceInterface(Protocol):
 class VectorDBServiceInterface(Protocol):
     rgx_space = re.compile(r"\s+")
     rgx_2_lines = re.compile(r"\n{2,}")
+    embedding_service: EmbeddingServiceInterface
 
     def get_collection_name_for_sentences_set(self, work_title: str):
         canon = self.rgx_space.sub('_', work_title)
@@ -32,9 +35,6 @@ class VectorDBServiceInterface(Protocol):
     def get_collection_name_for_section_headers(self, work_title: str):
         canon = self.rgx_space.sub('_', work_title)
         return f"collection_sections_{canon}"
-
-    def get_embedder_service(self) -> EmbeddingServiceInterface:
-        raise NotImplementedError
 
     def create_collection_for_section_headers(self, work_title: str):
         raise NotImplementedError
@@ -53,15 +53,15 @@ class VectorDBServiceInterface(Protocol):
                                         top_k:int = 10, min_score: float = 0.4) -> List[dict]:
         raise NotImplementedError
 
-    def insert_sentences_set(self, work_title:str, sentences_set: List[str]):
+    def insert_sentences_set(self, work_title:str, sentences_set: List[str],
+                             sentences_vectors: List[List[List[float]]]):
         raise NotImplementedError
 
     def insert_section_headers(self, work_title:str, sections: List[dict], **kwargs):
         """
 
         :param work_title:
-        :param titles:
-        :param content_ids: List of sql content id. The max length of each content id is 128
+        :param sections: list of section-dictionaries
         :param kwargs:
         """
         raise NotImplementedError

@@ -40,7 +40,7 @@ class MjPdfReader:
                 md_text = re.sub(f"[^\n]*{repeated_for_rgx}[^\n]*", "", md_text)
 
         md_text = re.sub(r"\n{4,}", "\n\n", md_text)
-        print(md_text)
+        return md_text
 
     def get_list_of_recurrent_texts_as_list(self):
         recurrents = {}

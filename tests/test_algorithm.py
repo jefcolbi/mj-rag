@@ -1,3 +1,4 @@
+import json
 from unittest import TestCase
 from mj_rag.algorithm import MJRagAlgorithm, SectionAnswerMode
 from typing import List
@@ -5,6 +6,8 @@ from mj_rag.interfaces import (VectorDBServiceInterface, EmbeddingServiceInterfa
                                SqlDBServiceInterface, LLMServiceInterface)
 import os
 from decouple import config
+
+from mj_rag.milvus.embedding_service import OpenAIEmbeddingService
 
 OPENAI_API_KEY = config("OPENAI_API_KEY")
 
@@ -47,6 +50,9 @@ with open('texts/flutter-3-29.md') as fp:
 with open('texts/simple_st.md') as fp:
     simple_st = fp.read()
 
+with open('texts/pdf_content_1.md') as fp:
+    pdf_content_1 = fp.read()
+
 
 markdown_content_1 = """Hi. How are you doing?
 My name is Jeff. I am 18 years old. And i am someone...
@@ -88,6 +94,7 @@ class MJRagAlgorithmTestCase(TestCase):
 
     def test_03_get_direct_answer(self):
         from mj_rag.milvus.vector_db_service import MilvusVectorDBService
+        from mj_rag.milvus.embedding_service import OpenAIEmbeddingService
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
@@ -104,7 +111,8 @@ class MJRagAlgorithmTestCase(TestCase):
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
-        algorithm = MJRagAlgorithm("test", MilvusVectorDBService("milvus.db"),
+        algorithm = MJRagAlgorithm("test",
+                                   MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'gpt-4o',
                                                   [OPENAI_API_KEY]))
         algorithm.save_text_as_set_in_vdb(flutter_3_29_text, count=3)
@@ -305,3 +313,13 @@ class MJRagAlgorithmTestCase(TestCase):
         print(algorithm.get_answer("How to make a toast in flutter 3.29 ?"))
         os.remove('milvus.db')
         os.remove('sql_db/7e0deade99e77bbfb73ae268d6f2ec6ea8c899a8e06f30a762755e48831a9d8f.json')
+
+    def test_20_handle_a_md_to_pdf_text(self):
+        from mj_rag.milvus.vector_db_service import MilvusVectorDBService
+        from mj_rag.litellm.llm_service import LiteLLMService
+
+        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db"),
+                                   LiteLLMService('openai', 'gpt-4.1-mini',
+                                                  [OPENAI_API_KEY]))
+        sections = algorithm.save_text_as_titles_in_vdb(pdf_content_1)
+        print(json.dumps(sections, indent=2))

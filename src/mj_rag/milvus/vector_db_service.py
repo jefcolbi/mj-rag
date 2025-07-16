@@ -10,7 +10,8 @@ from pymilvus import (
     WeightedRanker,
     connections as milvus_connections,
     utility,
-    model
+    model,
+    Hit,
 )
 
 
@@ -24,9 +25,9 @@ class MilvusVectorDBService(VectorDBServiceInterface):
 
     rgx_2_lines = re.compile(r"\n{2,}")
 
-    def __init__(self, uri: str, embedding_dimension: int=768, **kwargs):
+    def __init__(self, uri: str, embedding_service: EmbeddingServiceInterface, **kwargs):
         self.uri: str = uri
-        self.embedding_dimension: int = embedding_dimension
+        self.embedding_service = embedding_service
 
     def create_collection_for_section_headers(self, work_title: str):
         milvus_connections.connect(uri=self.uri)
@@ -42,7 +43,7 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                     auto_id=True,
                     max_length=100,
                 ),
-                FieldSchema(name=self.DENSE_VECTOR_FIELD, dtype=DataType.FLOAT_VECTOR, dim=self.embedding_dimension),
+                FieldSchema(name=self.DENSE_VECTOR_FIELD, dtype=DataType.FLOAT_VECTOR, dim=self.embedding_service.dimensions),
                 FieldSchema(name=self.TEXT_FIELD, dtype=DataType.VARCHAR, max_length=4_096),
                 FieldSchema(name=self.SQL_CONTENT_ID_FIELD, dtype=DataType.VARCHAR, max_length=128),
                 FieldSchema(name="level", dtype=DataType.INT8),
@@ -77,7 +78,7 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                     auto_id=True,
                     max_length=100,
                 ),
-                FieldSchema(name=self.DENSE_VECTOR_FIELD, dtype=DataType.FLOAT_VECTOR, dim=self.embedding_dimension),
+                FieldSchema(name=self.DENSE_VECTOR_FIELD, dtype=DataType.FLOAT_VECTOR, dim=self.embedding_service.dimensions),
                 FieldSchema(name=self.TEXT_FIELD, dtype=DataType.VARCHAR, max_length=65_535),
                 # FieldSchema(name=sparse_field, dtype=DataType.SPARSE_FLOAT_VECTOR),
             ]
@@ -101,13 +102,12 @@ class MilvusVectorDBService(VectorDBServiceInterface):
         collection_name = self.get_collection_name_for_sentences_set(work_title)
         collection = Collection(collection_name)
 
-        embedder_service = self.get_embedder_service()
         queries = [question]
         if alternates:
             queries.extend(alternates)
         if hypothetical_answers:
             queries.extend(hypothetical_answers)
-        query_vectors = embedder_service.encode_queries(queries)
+        query_vectors = self.embedding_service.encode_queries(queries)
 
         res = collection.search(query_vectors, self.DENSE_VECTOR_FIELD,
                                 {"metric_type": "IP", "params": {"radius": min_score}},
@@ -115,7 +115,8 @@ class MilvusVectorDBService(VectorDBServiceInterface):
         answers = []
         for topk_res in res:
             for one_res in topk_res:
-                answers.append({'score': one_res['distance'], 'text': one_res['entity'][self.TEXT_FIELD]})
+                one_res: Hit
+                answers.append({'score': one_res.distance, 'text': one_res.entity.get(self.TEXT_FIELD)})
         print(f"{answers = }")
         return answers
 
@@ -128,8 +129,7 @@ class MilvusVectorDBService(VectorDBServiceInterface):
         collection_name = self.get_collection_name_for_section_headers(work_title)
         collection = Collection(collection_name)
 
-        embedder_service = self.get_embedder_service()
-        query_vectors = embedder_service.encode_queries([header])
+        query_vectors = self.embedding_service.encode_queries([header])
 
         res = collection.search(query_vectors, self.DENSE_VECTOR_FIELD,
                                 {"metric_type": "IP", "params": {"radius": min_score}},
@@ -138,8 +138,9 @@ class MilvusVectorDBService(VectorDBServiceInterface):
         content_hashes = []
         for topk_res in res:
             for one_res in topk_res:
-                parents = one_res['parents']
-                sql_doc_id = one_res['entity'][self.SQL_CONTENT_ID_FIELD]
+                one_res: Hit
+                parents = one_res.entity.get('parents')
+                sql_doc_id = one_res.entity.get(self.SQL_CONTENT_ID_FIELD)
                 content = sql_db_service.get_content_from_id(work_title, sql_doc_id)
                 content_hash = self.get_content_hash(content)
 
@@ -149,16 +150,16 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                     content_hashes.append(content_hash)
 
                 answers.append({
-                    'score': one_res['distance'],
-                    'header': one_res['entity'][self.TEXT_FIELD],
-                    'level': one_res['entity']['level'],
+                    'score': one_res.distance,
+                    'header': one_res.entity.get(self.TEXT_FIELD),
+                    'level': one_res.entity.get('level'),
                     'parents': parents.split(self.PARENTS_SEPARATOR) if parents else None,
                     'content': content,
                     'sql_doc_id': sql_doc_id
                 })
 
         if alternates and len(answers) < top_k:
-            query_vectors = embedder_service.encode_queries(alternates)
+            query_vectors = self.embedding_service.encode_queries(alternates)
 
             res = collection.search(query_vectors, self.DENSE_VECTOR_FIELD,
                                     {"metric_type": "IP", "params": {"radius": min_score}},
@@ -166,8 +167,9 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                                     output_fields=[self.TEXT_FIELD, "parents", "level", self.SQL_CONTENT_ID_FIELD])
             for topk_res in res:
                 for one_res in topk_res:
-                    parents = one_res['parents']
-                    sql_doc_id = one_res['entity'][self.SQL_CONTENT_ID_FIELD]
+                    one_res: Hit
+                    parents = one_res.entity.get('parents')
+                    sql_doc_id = one_res.entity.get(self.SQL_CONTENT_ID_FIELD)
                     content = sql_db_service.get_content_from_id(work_title, sql_doc_id)
                     content_hash = self.get_content_hash(content)
 
@@ -177,9 +179,9 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                         content_hashes.append(content_hash)
 
                     answers.append({
-                        'score': one_res['distance'],
-                        'header': one_res['entity'][self.TEXT_FIELD],
-                        'level': one_res['entity']['level'],
+                        'score': one_res.distance,
+                        'header': one_res.entity.get(self.TEXT_FIELD),
+                        'level': one_res.entity.get('level'),
                         'parents': parents.split(self.PARENTS_SEPARATOR) if parents else None,
                         'content': content,
                         'sql_doc_id': sql_doc_id
@@ -188,28 +190,20 @@ class MilvusVectorDBService(VectorDBServiceInterface):
         print(f"{answers = }")
         return answers
 
-    def get_embedder_service(self) -> EmbeddingServiceInterface:
-        return model.dense.OpenAIEmbeddingFunction(
-                model_name='text-embedding-3-large', # Specify the model name
-                dimensions=self.embedding_dimension # Set the embedding dimensionality according to MRL feature.
-            )
-
-    def insert_sentences_set(self, work_title: str, sentences_set: List[str]):
+    def insert_sentences_set(self, work_title: str, sentences_set: List[str],
+                             sentences_vectors: List[List[List[float]]]):
         milvus_connections.connect(uri=self.uri)
 
         collection_name = self.get_collection_name_for_sentences_set(work_title)
         collection = Collection(collection_name)
 
-        embedder_service = self.get_embedder_service()
-        vectors = embedder_service.encode_documents(sentences_set)
         data = [
-            {self.DENSE_VECTOR_FIELD: vectors[i], self.TEXT_FIELD: sentences_set[i]}
-            for i in range(len(vectors))
+            {self.DENSE_VECTOR_FIELD: sentences_vectors[i], self.TEXT_FIELD: sentences_set[i]}
+            for i in range(len(sentences_vectors))
         ]
         collection.insert(data)
 
         data.clear()
-        vectors.clear()
 
     def insert_section_headers(self, work_title: str, sections: List[dict], **kwargs):
         milvus_connections.connect(uri=self.uri)
@@ -217,8 +211,7 @@ class MilvusVectorDBService(VectorDBServiceInterface):
         collection_name = self.get_collection_name_for_section_headers(work_title)
         collection = Collection(collection_name)
 
-        embedder_service = self.get_embedder_service()
-        vectors = embedder_service.encode_documents([section['header'] for section in sections])
+        vectors = self.embedding_service.encode_documents([section['header'] for section in sections])
         data = [
             {
                 self.DENSE_VECTOR_FIELD: vectors[i],

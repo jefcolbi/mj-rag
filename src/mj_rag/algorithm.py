@@ -16,17 +16,20 @@ helpers (prefixed with an underscore) are intended for internal use only.
 
 """
 import json
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Union, Literal
 
 from pyparsing import originalTextFor, lineStart, nestedExpr
 
 from mj_rag.interfaces import (VectorDBServiceInterface, SqlDBServiceInterface,
-                               LoggingServiceInterface, LLMServiceInterface)
+                               LoggingServiceInterface, LLMServiceInterface,
+                               EmbeddingServiceInterface)
 import re
 from pprint import pformat
 import logging
 from pathlib import Path
 from enum import Enum
+import tiktoken
+import numpy as np
 
 
 class SectionAnswerMode(Enum):
@@ -62,6 +65,19 @@ class SectionAnswerMode(Enum):
     TOP_K_RESTRANSCRIPT = "top_k_retranscript"
 
 
+
+class NumpyEncoder(json.JSONEncoder):
+    """ Special json encoder for numpy types """
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
+
+
 class MJRagAlgorithm:
     """High‑level façade that implements the MJ‑RAG workflow.
 
@@ -95,7 +111,7 @@ class MJRagAlgorithm:
         Forward‑compatibility hook for subclasses; currently unused.
     """
 
-    rgx_sentence_limiter = re.compile(r"([\.\?!]+[\n ]+)")
+    rgx_sentence_limiter = re.compile(r"([\.\?!\n]+[\n ]+)")
     rgx_only_space = re.compile(r"^[\s\n]*$")
     rgx_md_point = re.compile(r"- (.*)\n")
 
@@ -112,6 +128,7 @@ class MJRagAlgorithm:
         self.work_title: str = work_title
         self.vector_db_service: VectorDBServiceInterface = vector_db_service
         self.logging_service: LoggingServiceInterface = logging_service or self.get_default_logging_service()
+        self.embedding_service: EmbeddingServiceInterface = self.vector_db_service.embedding_service
         self.llm_service: LLMServiceInterface = llm_service
         self.sql_db_service: SqlDBServiceInterface = sql_db_service or self.get_default_sql_db_service()
         self.add_hierarchized_titles: bool = add_hierachized_titles
@@ -163,30 +180,12 @@ class MJRagAlgorithm:
         # we make sure the collection for the work exist
         self.vector_db_service.create_collection_for_sentences_set(self.work_title)
 
-        # split the content in sentences
-        lines = [senten.strip() for senten in self.rgx_sentence_limiter.split(markdown_content)
-                 if senten.strip()]
-        for line in lines:
-            self.logging_service.debug(line)
-
-        # build the sentences set
-        total_lines = len(lines)
-        sentences_set = []
-        for i in range(0, total_lines - 3, 2):
-            step = i + (count * 2)
-            sentence = ""
-            for j, part in enumerate(lines[i:step]):
-                if self.rgx_sentence_limiter.match(part):
-                    sentence = f"{sentence}{part}"
-                else:
-                    sentence = f"{sentence} {part}"
-            sentences_set.append(sentence)
-
-        for sentence in sentences_set:
-            self.logging_service.debug(f"===> {sentence}")
+        doc_hash, sentences_set = self.split_content_by_sentences(markdown_content,
+                                                            title=self.work_title, count=count)
+        sentences_vectors = self.get_embeddings_for_sentences(doc_hash, sentences_set)
 
         # insert the sentences in the the vector db
-        self.vector_db_service.insert_sentences_set(self.work_title, sentences_set)
+        self.vector_db_service.insert_sentences_set(self.work_title, sentences_set, sentences_vectors)
 
     def save_text_as_titles_in_vdb(self, markdown_content: str):
         """Extract headed sections from *markdown_content* and index their titles.
@@ -321,13 +320,22 @@ class MJRagAlgorithm:
         return self._process_section_matchs(matchs, mode, question=question, top_k=top_k)
 
     def get_answer(self, question:str, top_k: int = 5, return_raw: bool = False,
-                   mode: Optional[SectionAnswerMode] = None):
+                   mode: Optional[SectionAnswerMode] = None,
+                   number_of_sentences: Union[None, Literal["ONE", "FEW", "TOO_MANY"]] = None):
         """One‑stop shop: decide the best strategy and return an answer to *question*."""
-        classified_answer = self._classify_answer_for_question(question)
-        self.logging_service.info(f"{classified_answer = }")
+        if number_of_sentences is None:
+            classified_answer = self._classify_answer_for_question(question)
+            self.logging_service.info(f"{classified_answer = }")
 
-        number_of_sentences = classified_answer['number_of_sentences'].upper()
-        kind = classified_answer['kind'].upper() if 'kind' in classified_answer else None
+            number_of_sentences = classified_answer['number_of_sentences'].upper()
+            kind = classified_answer['kind'].upper() if 'kind' in classified_answer else None
+        else:
+            if mode == SectionAnswerMode.FIRST_BEST_SUMMARY or mode == SectionAnswerMode.TOP_K_SUMMARY:
+                kind = "SUMMARY"
+            elif mode == SectionAnswerMode.TOP_K_COMBINE == "COMBINE":
+                kind = "COMBINE"
+            else:
+                kind = None
 
         if number_of_sentences == "ONE":
             return self.get_direct_answer(question, use_alternates=True,
@@ -616,9 +624,15 @@ Answer with the following format:
         prompt = f"""
 The following text is a markdown of a webpage which contains an article. 
 {f"The article title is `{title}`." if title else ""}
-But this markdown is mixed with many parts of the webpage which are not the actual article or the main content.
-You must EXTRACT the actual article or the main content, SPLIT it by markdown headers and RETURN a response in the
-following format:
+
+Rules:
+1. This markdown is mixed with many parts of the webpage which are not the actual article or the main content.
+2. Analyze carefully the markdown and assume there can be some errors in heading and spacing.
+3. You must EXTRACT the actual article or the main content, ORGANIZE it by markdown headers, 
+spacing and semantic.
+4. If you can't identify a header consider it is the same content.
+6. Recopy the content of each header AS IS. Just fix punctuation and spacing issues.
+5. RETURN a response in the following format:
 
 [{{
   "header": "Top level header",
@@ -651,6 +665,37 @@ Text:
         self.logging_service.debug(json.dumps(resp, indent=2))
         self.save_in_cache_content_json_tree(hash, resp)
         return hash, resp
+
+    def split_content_by_sentences(self, markdown_content: str, title: str = None,
+                                   count: int = 5):
+        hash, res = self.get_cached_content_sentences(markdown_content)
+        if res:
+            return hash, res
+
+        # split the content in sentences
+        lines = [senten.strip() for senten in self.rgx_sentence_limiter.split(markdown_content)
+                 if senten.strip()]
+        for line in lines:
+            self.logging_service.debug(line)
+
+        # build the sentences set
+        total_lines = len(lines)
+        sentences_set = []
+        for i in range(0, total_lines - 3, 2):
+            step = i + (count * 2)
+            sentence = ""
+            for j, part in enumerate(lines[i:step]):
+                if self.rgx_sentence_limiter.match(part):
+                    sentence = f"{sentence}{part}"
+                else:
+                    sentence = f"{sentence} {part}"
+            sentences_set.append(sentence)
+
+        for sentence in sentences_set:
+            self.logging_service.debug(f"===> {sentence}")
+
+        self.save_in_cache_content_sentences(hash, sentences_set)
+        return hash, sentences_set
 
     def generate_summary_from_context_entries(self, context_entries: List[str]) -> str:
         msg_content = f"""Generate a summary of the following context
@@ -724,6 +769,44 @@ this question: {question}
         else:
             return hash, None
 
+    def get_cached_content_embeddings(self, content: Optional[str] = None,
+                                      doc_hash: Optional[str] = None)  -> Tuple[str, Optional[List[dict]]]:
+        cache_dir = Path('content_to_vector_cache')
+        if not cache_dir.exists():
+            cache_dir.mkdir()
+
+        if not doc_hash:
+            hash = self.get_doc_hash(content)
+        else:
+            hash = doc_hash
+
+        self.logging_service.debug(f"{hash = }")
+
+        cache_file = cache_dir / f"{hash}.json"
+        if cache_file.exists():
+            with cache_file.open() as fp:
+                res = json.load(fp)
+                return hash, res
+        else:
+            return hash, None
+
+    def get_cached_content_sentences(self, content: str) -> Tuple[str, Optional[List[dict]]]:
+        cache_dir = Path('content_to_sentence_cache')
+        if not cache_dir.exists():
+            cache_dir.mkdir()
+
+        hash = self.get_doc_hash(content)
+
+        self.logging_service.debug(f"{hash = }")
+
+        cache_file = cache_dir / f"{hash}.json"
+        if cache_file.exists():
+            with cache_file.open() as fp:
+                res = json.load(fp)
+                return hash, res
+        else:
+            return hash, None
+
     def get_doc_hash(self, content: str) -> str:
         from hashlib import sha256
         content = self.rgx_space.sub('', content)
@@ -741,13 +824,63 @@ this question: {question}
         with cache_file.open('w') as fp:
             fp.write(json.dumps(json_tree, indent=2))
 
+    def save_in_cache_content_embeddings(self, hash: str, json_tree: List[List]):
+        cache_dir = Path('content_to_vector_cache')
+        if not cache_dir.exists():
+            cache_dir.mkdir()
+
+        cache_file = cache_dir / f"{hash}.json"
+        with cache_file.open('w') as fp:
+            fp.write(json.dumps(json_tree, indent=2, cls=NumpyEncoder))
+
+    def save_in_cache_content_sentences(self, hash: str, sentences_set: List[str]):
+        cache_dir = Path('content_to_sentence_cache')
+        if not cache_dir.exists():
+            cache_dir.mkdir()
+
+        cache_file = cache_dir / f"{hash}.json"
+        with cache_file.open('w') as fp:
+            fp.write(json.dumps(sentences_set, indent=2))
+
+    def get_embeddings_for_sentences(self, doc_hash: str, sentences_set: List[str],
+                                     count: int = 5):
+        _, res = self.get_cached_content_embeddings(doc_hash=doc_hash)
+        if res:
+            return res
+
+        encoding = tiktoken.encoding_for_model(self.embedding_service.model_name)
+        vectors = []
+        tmp_sentences = []
+        tmp_tokens_count = 0
+        for i in range(len(sentences_set)):
+
+            sentences = sentences_set[i]
+            tokens_count = len(encoding.encode(sentences))
+
+            if tmp_tokens_count + tokens_count > 250000:
+                vectors.extend(self.embedding_service.encode_documents(tmp_sentences))
+                tmp_sentences.clear()
+                tmp_sentences.append(sentences)
+                tmp_tokens_count = tokens_count
+            else:
+                tmp_sentences.append(sentences)
+                tmp_tokens_count += tokens_count
+
+        if tmp_sentences:
+            vectors.extend(self.embedding_service.encode_documents(tmp_sentences))
+
+        self.save_in_cache_content_embeddings(doc_hash, vectors)
+        return vectors
+
+
     def enrich_sections(self, sections: list, parents=None, level: int=None) -> list:
         texts = []
 
         if parents is None:
             parents = []
-        if level is None:
-            level = len(sections)
+            level = 1
+        # if level is None:
+        #     level = len(sections)
 
         for section in sections:
             header = section['header']

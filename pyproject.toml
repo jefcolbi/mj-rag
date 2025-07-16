@@ -12,6 +12,7 @@ dependencies = [
     "pymupdf>=1.26.3",
     "pymupdf4llm>=0.0.26",
     "pyparsing>=3.2.3",
+    "tiktoken>=0.9.0",
 ]
 
 [project.optional-dependencies]

@@ -743,6 +743,7 @@ dependencies = [
     { name = "pymupdf" },
     { name = "pymupdf4llm" },
     { name = "pyparsing" },
+    { name = "tiktoken" },
 ]
 
 [package.optional-dependencies]
@@ -763,6 +764,7 @@ requires-dist = [
     { name = "pymupdf4llm", specifier = ">=0.0.26" },
     { name = "pyparsing", specifier = ">=3.2.3" },
     { name = "python-decouple", marker = "extra == 'tests'" },
+    { name = "tiktoken", specifier = ">=0.9.0" },
 ]
 provides-extras = ["milvus", "tests"]
 
@@ -1250,7 +1252,7 @@ wheels = [
 
 [[package]]
 name = "pymilvus"
-version = "2.5.8"
+version = "2.5.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
@@ -1261,9 +1263,9 @@ dependencies = [
     { name = "setuptools" },
     { name = "ujson" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3b/64/3bc30ab75104a21b9622915b93ffe42f6d250d5d16113624407fcfd42a12/pymilvus-2.5.8.tar.gz", hash = "sha256:48923e7efeebcc366d32b644772796f60484e0ca1a5afc1606d21a10ed98133c", size = 1260355 }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/53/4af820a37163225a76656222ee43a0eb8f1bd2ceec063315680a585435da/pymilvus-2.5.12.tar.gz", hash = "sha256:79ec7dc0616c2484f77abe98bca8deafb613645b5703c492b51961afd4f985d8", size = 1265893 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/96/2ce2a0b601d95e373897eb2334f83dba615bd5647b0e4908ff30959920d2/pymilvus-2.5.8-py3-none-any.whl", hash = "sha256:6f33c9e78c041373df6a94724c90ca83448fd231aa33d6298a7a84ed2a5a0236", size = 227647 },
+    { url = "https://files.pythonhosted.org/packages/68/4f/80a4940f2772d10272c3292444af767a5aa1a5bbb631874568713ca01d54/pymilvus-2.5.12-py3-none-any.whl", hash = "sha256:ef77a4a0076469a30b05f0bb23b5a058acfbdca83d82af9574ca651764017f44", size = 231425 },
 ]
 
 [package.optional-dependencies]

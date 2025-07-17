@@ -631,7 +631,7 @@ Rules:
 3. You must EXTRACT the actual article or the main content, ORGANIZE it by markdown headers, 
 spacing and semantic.
 4. If you can't identify a header consider it is the same content.
-6. Recopy the content of each header AS IS. Just fix punctuation and spacing issues.
+6. Recopy the content of each header AS IS. SUMMARIZATION NOT ALLOWED. Just fix punctuation and spacing issues.
 5. RETURN a response in the following format:
 
 [{{
@@ -655,6 +655,11 @@ Text:
 -------
 {content}
 -------"""
+
+        encoding = tiktoken.encoding_for_model(self.embedding_service.model_name)
+        tokens_count = len(encoding.encode(prompt))
+        if tokens_count > 100000:
+            raise ValueError(f"f{tokens_count = }")
 
         response = self.llm_service.complete_messages([{'role': 'user', 'content': prompt}])
         resp = self.parse_llm_response_to_json_list(response)
@@ -782,11 +787,10 @@ this question: {question}
 
         self.logging_service.debug(f"{hash = }")
 
-        cache_file = cache_dir / f"{hash}.json"
+        cache_file = cache_dir / f"{hash}.npy"
         if cache_file.exists():
-            with cache_file.open() as fp:
-                res = json.load(fp)
-                return hash, res
+            res = np.load(str(cache_file))
+            return hash, res
         else:
             return hash, None
 
@@ -824,14 +828,13 @@ this question: {question}
         with cache_file.open('w') as fp:
             fp.write(json.dumps(json_tree, indent=2))
 
-    def save_in_cache_content_embeddings(self, hash: str, json_tree: List[List]):
+    def save_in_cache_content_embeddings(self, hash: str, embeddings: np.ndarray):
         cache_dir = Path('content_to_vector_cache')
         if not cache_dir.exists():
             cache_dir.mkdir()
 
-        cache_file = cache_dir / f"{hash}.json"
-        with cache_file.open('w') as fp:
-            fp.write(json.dumps(json_tree, indent=2, cls=NumpyEncoder))
+        cache_file = cache_dir / f"{hash}.npy"
+        np.save(str(cache_file), embeddings)
 
     def save_in_cache_content_sentences(self, hash: str, sentences_set: List[str]):
         cache_dir = Path('content_to_sentence_cache')
@@ -845,7 +848,7 @@ this question: {question}
     def get_embeddings_for_sentences(self, doc_hash: str, sentences_set: List[str],
                                      count: int = 5):
         _, res = self.get_cached_content_embeddings(doc_hash=doc_hash)
-        if res:
+        if res is not None:
             return res
 
         encoding = tiktoken.encoding_for_model(self.embedding_service.model_name)

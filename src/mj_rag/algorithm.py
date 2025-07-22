@@ -155,7 +155,7 @@ class MJRagAlgorithm:
         from mj_rag.dummy import JsonSqlDBService
         return JsonSqlDBService()
 
-    def save_text_in_databases(self, markdown_content: str):
+    def save_text_in_databases(self, markdown_content: str) -> str:
         """Persist *markdown_content* into both the vector and SQL stores."""
         self.save_text_as_set_in_vdb(markdown_content)
         self.save_text_as_titles_in_vdb(markdown_content)
@@ -636,15 +636,15 @@ spacing and semantic.
 
 [{{
   "header": "Top level header",
-  "content": "El Plan VEA es un programa de ayudas lanzado ...",
+  "content": "El Plan VEA es un programa de ayudas lanzado ... until the end",
   "subsections": [
     {{
       "header": "Mid level header",
-      "content": "Los objetivos principales del Plan VEA son...",
+      "content": "Los objetivos principales del Plan VEA son ... until the end",
       "subsections": [
         {{
           "header": "Low level header",
-          "content": "Muchos usuarios temen que las ayudas del ..."
+          "content": "Muchos usuarios temen que las ayudas del ... until the end"
         }}
       ]
     }}
@@ -909,7 +909,8 @@ this question: {question}
     def parse_llm_response_to_json_list(self, response: str) -> List[dict]:
         nester_expr = originalTextFor(lineStart + nestedExpr("[", "]"))
         results = nester_expr.search_string(response)
-        return json.loads(results.as_list()[0][0])
+        res_json_str = results.as_list()[0][0]
+        return json.loads(res_json_str)
 
     def _save_sections_in_sql_db(self, doc_hash: str, sections: List[dict]):
         for i, section in enumerate(sections):

@@ -48,6 +48,8 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                 FieldSchema(name=self.SQL_CONTENT_ID_FIELD, dtype=DataType.VARCHAR, max_length=128),
                 FieldSchema(name="level", dtype=DataType.INT8),
                 FieldSchema(name="parents", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="author", dtype=DataType.VARCHAR, max_length=12_288),
                 # FieldSchema(name=sparse_field, dtype=DataType.SPARSE_FLOAT_VECTOR),
             ]
 
@@ -80,6 +82,8 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                 ),
                 FieldSchema(name=self.DENSE_VECTOR_FIELD, dtype=DataType.FLOAT_VECTOR, dim=self.embedding_service.dimensions),
                 FieldSchema(name=self.TEXT_FIELD, dtype=DataType.VARCHAR, max_length=65_535),
+                FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="author", dtype=DataType.VARCHAR, max_length=12_288),
                 # FieldSchema(name=sparse_field, dtype=DataType.SPARSE_FLOAT_VECTOR),
             ]
 
@@ -155,7 +159,9 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                     'level': one_res.entity.get('level'),
                     'parents': parents.split(self.PARENTS_SEPARATOR) if parents else None,
                     'content': content,
-                    'sql_doc_id': sql_doc_id
+                    'sql_doc_id': sql_doc_id,
+                    'source': one_res.entity.get('source'),
+                    'author': one_res.entity.get('author'),
                 })
 
         if alternates and len(answers) < top_k:
@@ -184,7 +190,9 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                         'level': one_res.entity.get('level'),
                         'parents': parents.split(self.PARENTS_SEPARATOR) if parents else None,
                         'content': content,
-                        'sql_doc_id': sql_doc_id
+                        'sql_doc_id': sql_doc_id,
+                        'source': one_res.entity.get('source'),
+                        'author': one_res.entity.get('author'),
                     })
 
         print(f"{answers = }")
@@ -218,7 +226,9 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                 self.TEXT_FIELD: sections[i]['header'],
                 self.SQL_CONTENT_ID_FIELD: sections[i]['sql_doc_id'],
                 'level': sections[i]['level'],
-                'parents': self.PARENTS_SEPARATOR.join(sections[i]['parents'])
+                'parents': self.PARENTS_SEPARATOR.join(sections[i]['parents']),
+                'source': sections[i]['source'],
+                'author': sections[i]['author'],
             }
             for i in range(len(vectors))
         ]

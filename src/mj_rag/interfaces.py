@@ -1,4 +1,4 @@
-from typing import List, Protocol
+from typing import List, Protocol, Optional
 import re
 
 
@@ -54,14 +54,28 @@ class VectorDBServiceInterface(Protocol):
         raise NotImplementedError
 
     def insert_sentences_set(self, work_title:str, sentences_set: List[str],
-                             sentences_vectors: List[List[List[float]]]):
+                             sentences_vectors: List[List[List[float]]],
+                             source_title: str,
+                             source_author: Optional[str] = None,
+                             source_url: Optional[str] = None,
+                             source_type: Optional[str] = None,
+                             ):
         raise NotImplementedError
 
-    def insert_section_headers(self, work_title:str, sections: List[dict], **kwargs):
+    def insert_section_headers(self, work_title:str, sections: List[dict],
+                               source_title: str,
+                               source_author: Optional[str] = None,
+                               source_url: Optional[str] = None,
+                               source_type: Optional[str] = None,
+                               **kwargs):
         """
 
         :param work_title:
         :param sections: list of section-dictionaries
+        :param source_title:
+        :param source_author:
+        :param source_url:
+        :param source_type:
         :param kwargs:
         """
         raise NotImplementedError

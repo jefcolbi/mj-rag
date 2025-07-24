@@ -1,5 +1,5 @@
 import re
-from typing import List
+from typing import List, Optional
 
 from mj_rag.interfaces import VectorDBServiceInterface, EmbeddingServiceInterface, SqlDBServiceInterface
 from pymilvus import (
@@ -48,8 +48,11 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                 FieldSchema(name=self.SQL_CONTENT_ID_FIELD, dtype=DataType.VARCHAR, max_length=128),
                 FieldSchema(name="level", dtype=DataType.INT8),
                 FieldSchema(name="parents", dtype=DataType.VARCHAR, max_length=12_288),
-                FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=12_288),
-                FieldSchema(name="author", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source_title", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source_author", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source_url", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source_type", dtype=DataType.VARCHAR, max_length=12_288),
+                # FieldSchema(name=sparse_field, dtype=DataType.SPARSE_FLOAT_VECTOR),
                 # FieldSchema(name=sparse_field, dtype=DataType.SPARSE_FLOAT_VECTOR),
             ]
 
@@ -82,8 +85,10 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                 ),
                 FieldSchema(name=self.DENSE_VECTOR_FIELD, dtype=DataType.FLOAT_VECTOR, dim=self.embedding_service.dimensions),
                 FieldSchema(name=self.TEXT_FIELD, dtype=DataType.VARCHAR, max_length=65_535),
-                FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=12_288),
-                FieldSchema(name="author", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source_title", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source_author", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source_url", dtype=DataType.VARCHAR, max_length=12_288),
+                FieldSchema(name="source_type", dtype=DataType.VARCHAR, max_length=12_288),
                 # FieldSchema(name=sparse_field, dtype=DataType.SPARSE_FLOAT_VECTOR),
             ]
 
@@ -115,12 +120,22 @@ class MilvusVectorDBService(VectorDBServiceInterface):
 
         res = collection.search(query_vectors, self.DENSE_VECTOR_FIELD,
                                 {"metric_type": "IP", "params": {"radius": min_score}},
-                                top_k, output_fields=[self.TEXT_FIELD])
+                                top_k, output_fields=[self.TEXT_FIELD, 'source_title',
+                                                      'source_author', 'source_url',
+                                                      'source_type'])
         answers = []
         for topk_res in res:
             for one_res in topk_res:
                 one_res: Hit
-                answers.append({'score': one_res.distance, 'text': one_res.entity.get(self.TEXT_FIELD)})
+                print(f"{one_res = }")
+                answers.append({
+                    'score': one_res.distance,
+                    'text': one_res.entity.get(self.TEXT_FIELD),
+                    'source_title': one_res.entity.get('source_title'),
+                    'source_author': one_res.entity.get('source_author'),
+                    'source_url': one_res.entity.get('source_url'),
+                    'source_type': one_res.entity.get('source_type'),
+                })
         print(f"{answers = }")
         return answers
 
@@ -137,7 +152,10 @@ class MilvusVectorDBService(VectorDBServiceInterface):
 
         res = collection.search(query_vectors, self.DENSE_VECTOR_FIELD,
                                 {"metric_type": "IP", "params": {"radius": min_score}},
-                                top_k, output_fields=[self.TEXT_FIELD, "parents", "level", self.SQL_CONTENT_ID_FIELD])
+                                top_k, output_fields=[self.TEXT_FIELD, "parents", "level",
+                                                      self.SQL_CONTENT_ID_FIELD, 'source_title',
+                                                      'source_author', 'source_url',
+                                                      'source_type'])
         answers = []
         content_hashes = []
         for topk_res in res:
@@ -160,8 +178,10 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                     'parents': parents.split(self.PARENTS_SEPARATOR) if parents else None,
                     'content': content,
                     'sql_doc_id': sql_doc_id,
-                    'source': one_res.entity.get('source'),
-                    'author': one_res.entity.get('author'),
+                    'source_title': one_res.entity.get('source_title'),
+                    'source_author': one_res.entity.get('source_author'),
+                    'source_url': one_res.entity.get('source_url'),
+                    'source_type': one_res.entity.get('source_type'),
                 })
 
         if alternates and len(answers) < top_k:
@@ -170,7 +190,10 @@ class MilvusVectorDBService(VectorDBServiceInterface):
             res = collection.search(query_vectors, self.DENSE_VECTOR_FIELD,
                                     {"metric_type": "IP", "params": {"radius": min_score}},
                                     top_k - len(answers),  # we need to fill only top_k answers
-                                    output_fields=[self.TEXT_FIELD, "parents", "level", self.SQL_CONTENT_ID_FIELD])
+                                    output_fields=[self.TEXT_FIELD, "parents", "level",
+                                                   self.SQL_CONTENT_ID_FIELD, 'source_title',
+                                                      'source_author', 'source_url',
+                                                      'source_type'])
             for topk_res in res:
                 for one_res in topk_res:
                     one_res: Hit
@@ -191,29 +214,48 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                         'parents': parents.split(self.PARENTS_SEPARATOR) if parents else None,
                         'content': content,
                         'sql_doc_id': sql_doc_id,
-                        'source': one_res.entity.get('source'),
-                        'author': one_res.entity.get('author'),
+                        'source_title': one_res.entity.get('source_title'),
+                        'source_author': one_res.entity.get('source_author'),
+                        'source_url': one_res.entity.get('source_url'),
+                        'source_type': one_res.entity.get('source_type'),
                     })
 
         print(f"{answers = }")
         return answers
 
     def insert_sentences_set(self, work_title: str, sentences_set: List[str],
-                             sentences_vectors: List[List[List[float]]]):
+                             sentences_vectors: List[List[List[float]]],
+                             source_title: str,
+                             source_author: Optional[str] = None,
+                             source_url: Optional[str] = None,
+                             source_type: Optional[str] = None,
+                             ):
         milvus_connections.connect(uri=self.uri)
 
         collection_name = self.get_collection_name_for_sentences_set(work_title)
         collection = Collection(collection_name)
 
         data = [
-            {self.DENSE_VECTOR_FIELD: sentences_vectors[i], self.TEXT_FIELD: sentences_set[i]}
+            {
+                self.DENSE_VECTOR_FIELD: sentences_vectors[i],
+                self.TEXT_FIELD: sentences_set[i],
+                'source_title': source_title,
+                'source_author': source_author or '',
+                'source_url': source_url or '',
+                'source_type': source_type or ''
+            }
             for i in range(len(sentences_vectors))
         ]
         collection.insert(data)
 
         data.clear()
 
-    def insert_section_headers(self, work_title: str, sections: List[dict], **kwargs):
+    def insert_section_headers(self, work_title: str, sections: List[dict],
+                               source_title: str,
+                               source_author: Optional[str] = None,
+                               source_url: Optional[str] = None,
+                               source_type: Optional[str] = None,
+                               **kwargs):
         milvus_connections.connect(uri=self.uri)
 
         collection_name = self.get_collection_name_for_section_headers(work_title)
@@ -227,8 +269,10 @@ class MilvusVectorDBService(VectorDBServiceInterface):
                 self.SQL_CONTENT_ID_FIELD: sections[i]['sql_doc_id'],
                 'level': sections[i]['level'],
                 'parents': self.PARENTS_SEPARATOR.join(sections[i]['parents']),
-                'source': sections[i]['source'],
-                'author': sections[i]['author'],
+                "source_title": source_title,
+                "source_author": source_author or '',
+                "source_url": source_url or '',
+                "source_type": source_type or ''
             }
             for i in range(len(vectors))
         ]

@@ -115,8 +115,10 @@ class MJRagAlgorithmTestCase(TestCase):
                                    MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'gpt-4o',
                                                   [OPENAI_API_KEY]))
-        algorithm.save_text_as_set_in_vdb(flutter_3_29_text, count=3)
-        answer = algorithm.get_direct_answer("what is the behavior when android device doesn't have a vulkan driver?", use_alternates=True)
+        algorithm.save_text_as_set_in_vdb(flutter_3_29_text, "What is new in Flutter 3.29",
+                                          source_url="https://medium.com/flutter/whats-new-in-flutter-3-29-f90c380c2317",
+                                          count=3)
+        answer = algorithm.get_direct_answer("what is the behavior when android device doesn't have a vulkan driver? Cite your sources", use_alternates=True)
         print(f"{answer = }")
         os.remove('milvus.db')
 
@@ -139,7 +141,7 @@ class MJRagAlgorithmTestCase(TestCase):
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
-        algorithm = MJRagAlgorithm("test", MilvusVectorDBService("milvus.db"),
+        algorithm = MJRagAlgorithm("test", MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'gpt-4o',
                                                   [OPENAI_API_KEY]))
         algorithm.save_text_as_titles_in_vdb(simple_st)
@@ -149,7 +151,7 @@ class MJRagAlgorithmTestCase(TestCase):
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
-        algorithm = MJRagAlgorithm("test", MilvusVectorDBService("milvus.db"),
+        algorithm = MJRagAlgorithm("test", MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'gpt-4o',
                                                   [OPENAI_API_KEY]))
         algorithm.save_text_as_titles_in_vdb(simple_st)
@@ -161,7 +163,7 @@ class MJRagAlgorithmTestCase(TestCase):
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
-        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db"),
+        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'gpt-4o',
                                                   [OPENAI_API_KEY]))
         algorithm.save_text_as_titles_in_vdb(flutter_3_29_text)
@@ -174,7 +176,7 @@ class MJRagAlgorithmTestCase(TestCase):
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
-        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db"),
+        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'o3',
                                                   [OPENAI_API_KEY]))
         algorithm.save_text_as_titles_in_vdb(flutter_3_29_text)
@@ -213,7 +215,7 @@ class MJRagAlgorithmTestCase(TestCase):
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
-        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db"),
+        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'o3',
                                                   [OPENAI_API_KEY]))
         algorithm.save_text_as_titles_in_vdb(flutter_3_29_text)
@@ -226,11 +228,12 @@ class MJRagAlgorithmTestCase(TestCase):
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
-        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db"),
+        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'gpt-4o',
                                                   [OPENAI_API_KEY]))
-        algorithm.save_text_as_titles_in_vdb(flutter_3_29_text)
-        print(algorithm.get_section_as_answer_from_question("What is new in flutter 3.29 concerning Material UI?",
+        algorithm.save_text_as_titles_in_vdb(flutter_3_29_text, "What is new in flutter 3.29 concerning Material UI?",
+                                             source_url="https://flutter.dev/docs/development/tools/sdk/release-notes/release-notes-3.29.0")
+        print(algorithm.get_section_as_answer_from_question("What is new in flutter 3.29 concerning Material UI? Cite your source",
                                 mode=SectionAnswerMode.FIRST_BEST_RAW))
         os.remove('milvus.db')
         os.remove('sql_db/7e0deade99e77bbfb73ae268d6f2ec6ea8c899a8e06f30a762755e48831a9d8f.json')
@@ -240,11 +243,12 @@ class MJRagAlgorithmTestCase(TestCase):
         from mj_rag.litellm.llm_service import LiteLLMService
 
         os.environ.setdefault('OPENAI_API_KEY', OPENAI_API_KEY)
-        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db"),
+        algorithm = MJRagAlgorithm("Flutter Updates", MilvusVectorDBService("milvus.db", OpenAIEmbeddingService()),
                                    LiteLLMService('openai', 'gpt-4o',
                                                   [OPENAI_API_KEY]))
-        algorithm.save_text_as_titles_in_vdb(flutter_3_29_text)
-        print(algorithm.get_section_as_answer_from_question("What is new in flutter 3.29 concerning Material UI?",
+        algorithm.save_text_as_titles_in_vdb(flutter_3_29_text, "What is new in flutter 3.29 concerning Material UI?",
+                                             source_url="https://flutter.dev/docs/development/tools/sdk/release-notes/release-notes-3.29.0")
+        print(algorithm.get_section_as_answer_from_question("What is new in flutter 3.29 concerning Material UI? Cite your source",
                                 mode=SectionAnswerMode.FIRST_BEST_SUMMARY))
         os.remove('milvus.db')
         os.remove('sql_db/7e0deade99e77bbfb73ae268d6f2ec6ea8c899a8e06f30a762755e48831a9d8f.json')

@@ -155,12 +155,28 @@ class MJRagAlgorithm:
         from mj_rag.dummy import JsonSqlDBService
         return JsonSqlDBService()
 
-    def save_text_in_databases(self, markdown_content: str) -> str:
+    def save_text_in_databases(self, markdown_content: str,
+                               source_title: str,
+                               source_author: Optional[str] = None,
+                               source_url: Optional[str] = None,
+                               source_type: Optional[str] = None,
+                               doc_hash: Optional[str] = None,
+                               ) -> str:
         """Persist *markdown_content* into both the vector and SQL stores."""
-        self.save_text_as_set_in_vdb(markdown_content)
-        self.save_text_as_titles_in_vdb(markdown_content)
+        self.save_text_as_set_in_vdb(markdown_content, source_title, source_author=source_author,
+                                     source_url=source_url, source_type=source_type,
+                                     doc_hash=doc_hash)
+        return self.save_text_as_titles_in_vdb(markdown_content, source_title, source_author=source_author,
+                                     source_url=source_url, source_type=source_type,
+                                     doc_hash=doc_hash)
 
-    def save_text_as_set_in_vdb(self, markdown_content: str, count: int = 5):
+    def save_text_as_set_in_vdb(self, markdown_content: str,
+                                source_title: str,
+                                source_author: Optional[str] = None,
+                                source_url: Optional[str] = None,
+                                source_type: Optional[str] = None,
+                                doc_hash: Optional[str] = None,
+                                count: int = 5) -> str:
         """Split *markdown_content* into windows of *count* sentences and store them.
 
         The text is first tokenised by naïvely splitting on punctuation (see
@@ -172,6 +188,10 @@ class MJRagAlgorithm:
         ----------
         markdown_content : str
             Raw markdown article.
+        source : str
+            Source of the markdown content (title of pdf or web page)
+        author : str
+            Author of markdown content (name of author of the pdf, or url of the site web)
         count : int, default 5
             Window size in sentences.  Each VDB document will contain roughly
             this many sentences.
@@ -181,13 +201,22 @@ class MJRagAlgorithm:
         self.vector_db_service.create_collection_for_sentences_set(self.work_title)
 
         doc_hash, sentences_set = self.split_content_by_sentences(markdown_content,
-                                                            title=self.work_title, count=count)
+                                                            doc_hash=doc_hash, count=count)
         sentences_vectors = self.get_embeddings_for_sentences(doc_hash, sentences_set)
 
-        # insert the sentences in the the vector db
-        self.vector_db_service.insert_sentences_set(self.work_title, sentences_set, sentences_vectors)
+        # insert the sentences in the vector db
+        self.vector_db_service.insert_sentences_set(self.work_title, sentences_set, sentences_vectors,
+                                                    source_title, source_author=source_author,
+                                                    source_url=source_url, source_type=source_type)
+        return doc_hash
 
-    def save_text_as_titles_in_vdb(self, markdown_content: str):
+    def save_text_as_titles_in_vdb(self, markdown_content: str,
+                                   source_title: str,
+                                   source_author: Optional[str] = None,
+                                   source_url: Optional[str] = None,
+                                   source_type: Optional[str] = None,
+                                   doc_hash: Optional[str] = None,
+                                   ):
         """Extract headed sections from *markdown_content* and index their titles.
 
         This method performs three steps:
@@ -206,7 +235,7 @@ class MJRagAlgorithm:
         self.vector_db_service.create_collection_for_section_headers(self.work_title)
 
         # get the doc's hash and the derived sections
-        doc_hash, sections = self.split_content_with_llm(markdown_content)
+        doc_hash, sections = self.split_content_with_llm(markdown_content, doc_hash=doc_hash)
 
         # save the section in sql db
         self._save_sections_in_sql_db(doc_hash, sections)
@@ -220,7 +249,11 @@ class MJRagAlgorithm:
         self.logging_service.debug(json.dumps(sections, indent=2))
 
         # save the sections with their sql doc id in vector database
-        self.vector_db_service.insert_section_headers(self.work_title, sections)
+        self.vector_db_service.insert_section_headers(self.work_title, sections,
+                                                      source_title, source_author=source_author,
+                                                      source_url=source_url, source_type=source_type
+                                                      )
+        return doc_hash
 
     def get_direct_answer(self, question: str, use_alternates: bool = False,
                           use_hypothetical_answers: bool = False) -> str:
@@ -251,7 +284,7 @@ class MJRagAlgorithm:
         messages = [
             {
                 "role": "system",
-                "content": 'You are an expert in RAG. You use the context to respond the user question.'
+                "content": 'You are an expert in RAG. You use the context to respond the user question. Mention your references.'
             },
             {
                 "role": "user",
@@ -484,6 +517,13 @@ Your answer: """
             parents_hierarchy = ""
         content = f"Header: {header}\nParents Hierarchy: {parents_hierarchy}"
         content += f"\nLevel: {section_match['level']}\nSemantic score: {section_match['score']}"
+        content += f"\nSource title: {section_match['source_title']}"
+        if section_match.get('source_url'):
+            content += f"\nSource url: {section_match['source_url']}"
+        if section_match.get('source_author'):
+            content += f"\nSource author: {section_match['source_author']}"
+        if section_match.get('source_type'):
+            content += f"\nSource type: {section_match['source_type']}"
         content += f"\nContent: {section_match['content']}"
         return content
 
@@ -610,16 +650,20 @@ Answer with the following format:
         results = nester_expr.search_string(response)
         return json.loads(results.as_list()[0][0])
 
-    def split_content_with_llm(self, content: str, title: str = None) -> Tuple[str, List[dict]]:
+    def split_content_with_llm(self, content: str, title: str = None,
+                               doc_hash: Optional[str] = None) -> Tuple[str, List[dict]]:
         """Ask the LLM to parse *content* into a *header/content* JSON tree.
 
         Results are cached on disk (see :py:meth:`get_cached_content_json_tree`) so
         that repeated ingestion of the same document does not incur extra token
         costs.
         """
-        hash, res = self.get_cached_content_json_tree(content)
+        hash, res = self.get_cached_content_json_tree(content, doc_hash=doc_hash)
         if res:
             return hash, res
+
+        if not content:
+            raise ValueError("Empty content")
 
         prompt = f"""
 The following text is a markdown of a webpage which contains an article. 
@@ -631,8 +675,9 @@ Rules:
 3. You must EXTRACT the actual article or the main content, ORGANIZE it by markdown headers, 
 spacing and semantic.
 4. If you can't identify a header consider it is the same content.
-6. Recopy the content of each header AS IS. SUMMARIZATION NOT ALLOWED. Just fix punctuation and spacing issues.
-5. RETURN a response in the following format:
+5. Recopy the content of each header AS IS. SUMMARIZATION NOT ALLOWED. Just fix punctuation and spacing issues.
+6. Your response will be parsed. Avoid any comment or json errors.
+7. RETURN a response in the following format:
 
 [{{
   "header": "Top level header",
@@ -661,8 +706,19 @@ Text:
         if tokens_count > 100000:
             raise ValueError(f"f{tokens_count = }")
 
-        response = self.llm_service.complete_messages([{'role': 'user', 'content': prompt}])
-        resp = self.parse_llm_response_to_json_list(response)
+        errors = []
+        for _ in range(5):
+            try:
+                messages = [{'role': 'user', 'content': prompt}]
+                messages.extend(errors)
+                response = self.llm_service.complete_messages(messages)
+                resp = self.parse_llm_response_to_json_list(response)
+                break
+            except json.JSONDecodeError as e:
+                errors.append({'role': 'user', 'content': f"Your response is not valid JSON: {e}"})
+        else:
+            raise ValueError("The LLM can't return valid JSON after 5 tries.")
+
         self.logging_service.debug("Before enriching section")
         self.logging_service.debug(json.dumps(resp, indent=2))
         resp = self.enrich_sections(resp)
@@ -671,11 +727,14 @@ Text:
         self.save_in_cache_content_json_tree(hash, resp)
         return hash, resp
 
-    def split_content_by_sentences(self, markdown_content: str, title: str = None,
+    def split_content_by_sentences(self, markdown_content: str, doc_hash: str = None,
                                    count: int = 5):
-        hash, res = self.get_cached_content_sentences(markdown_content)
+        hash, res = self.get_cached_content_sentences(markdown_content, doc_hash=doc_hash)
         if res:
             return hash, res
+
+        if not markdown_content:
+            raise ValueError("Empty content")
 
         # split the content in sentences
         lines = [senten.strip() for senten in self.rgx_sentence_limiter.split(markdown_content)
@@ -703,7 +762,7 @@ Text:
         return hash, sentences_set
 
     def generate_summary_from_context_entries(self, context_entries: List[str]) -> str:
-        msg_content = f"""Generate a summary of the following context
+        msg_content = f"""Generate a summary of the following context and cite your sources
 
 {self.format_context_entries(context_entries)}"""
 
@@ -717,12 +776,12 @@ Text:
     def generate_retranscript_from_context_entries(self, context_entries: List[str],
                                                    question: str = None) -> str:
         if question:
-            msg_content = f"""Restranscript the following context in a clear and smart way to answer 
+            msg_content = f"""Restranscript the following context in a clear and smart way, and cite your sources to answer
 this question: {question}
 
 {self.format_context_entries(context_entries)}"""
         else:
-            msg_content = f"""Retranscript the following context in a clear and smart way
+            msg_content = f"""Retranscript the following context in a clear and smart way, and cite your sources
 
 {self.format_context_entries(context_entries)}"""
 
@@ -736,12 +795,12 @@ this question: {question}
 
     def combine_context_entries(self, context_entries: List[str], question: str = None) -> str:
         if question:
-            msg_content = f"""Combine the following context in a clear and smart way to answer 
+            msg_content = f"""Combine the following context in a clear and smart way, and cite your sources to answer 
 this question: {question}
 
 {self.format_context_entries(context_entries)}"""
         else:
-            msg_content = f"""Combine the following context in a clear and smart way
+            msg_content = f"""Combine the following context in a clear and smart way, and cite your sources
 
 {self.format_context_entries(context_entries)}"""
 
@@ -757,12 +816,12 @@ this question: {question}
         ctx = '\n~~~~~~~~~\n'.join(context_entries)
         return f"++++++++++++++++\n{ctx}\n++++++++++++++++"
 
-    def get_cached_content_json_tree(self, content: str) -> Tuple[str, Optional[List[dict]]]:
+    def get_cached_content_json_tree(self, content: str, doc_hash: Optional[str] = None) -> Tuple[str, Optional[List[dict]]]:
         cache_dir = Path('content_to_json_cache')
         if not cache_dir.exists():
             cache_dir.mkdir()
 
-        hash = self.get_doc_hash(content)
+        hash = self.get_doc_hash(content) if not doc_hash else doc_hash
 
         self.logging_service.debug(f"{hash = }")
 
@@ -794,12 +853,12 @@ this question: {question}
         else:
             return hash, None
 
-    def get_cached_content_sentences(self, content: str) -> Tuple[str, Optional[List[dict]]]:
+    def get_cached_content_sentences(self, content: str, doc_hash: Optional[str] = None) -> Tuple[str, Optional[List[dict]]]:
         cache_dir = Path('content_to_sentence_cache')
         if not cache_dir.exists():
             cache_dir.mkdir()
 
-        hash = self.get_doc_hash(content)
+        hash = self.get_doc_hash(content) if not doc_hash else doc_hash
 
         self.logging_service.debug(f"{hash = }")
 

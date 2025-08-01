@@ -1,4 +1,5 @@
 import json
+from pprint import pformat
 from unittest import TestCase
 from mj_rag.algorithm import MJRagAlgorithm, SectionAnswerMode
 from typing import List
@@ -6,13 +7,19 @@ from mj_rag.interfaces import (VectorDBServiceInterface, EmbeddingServiceInterfa
                                SqlDBServiceInterface, LLMServiceInterface)
 import os
 from decouple import config
+import logging
 
 from mj_rag.milvus.embedding_service import OpenAIEmbeddingService
 
 OPENAI_API_KEY = config("OPENAI_API_KEY")
 
 
+class DummyEmbeddingService(EmbeddingServiceInterface):
+    model_name = "text-embedding-3-small"
+    dimensions = 1536
+
 class DummyVectorDBService(VectorDBServiceInterface):
+    embedding_service = DummyEmbeddingService()
     def get_possible_answers_from_question(self, work_title: str, question: str, alternates: List[str] = None,
                                            hypothetical_answers: List[str] = None, top_k: int = 10,
                                            min_score: float = 0.4) -> List[dict]:
@@ -53,6 +60,9 @@ with open('texts/simple_st.md') as fp:
 with open('texts/pdf_content_1.md') as fp:
     pdf_content_1 = fp.read()
 
+with open('texts/complex_wikipedia.md') as fp:
+    complex_wikipedia = fp.read()
+
 
 markdown_content_1 = """Hi. How are you doing?
 My name is Jeff. I am 18 years old. And i am someone...
@@ -79,9 +89,21 @@ Another popular hybrid strategy is depending on containerd or Podman in CI/CD an
 
 class MJRagAlgorithmTestCase(TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        logger = logging.getLogger("test")
+        logger.setLevel(logging.DEBUG)
+        hdlr = logging.FileHandler("test.log")
+        hdlr.setLevel(logging.DEBUG)
+        logger.addHandler(hdlr)
+
     def test_01_splitting_sentences(self):
         algorithm = MJRagAlgorithm("test", DummyVectorDBService(), DummyLLMService())
-        algorithm.save_text_in_databases(markdown_content_1)
+        doc_hash, sentences = algorithm.split_content_by_sentences(complex_wikipedia, count=5)
+        for sentence in sentences:
+            print(sentence)
+            print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
 
     def test_02_put_sentences_in_vdb(self):
         from mj_rag.milvus.vector_db_service import MilvusVectorDBService

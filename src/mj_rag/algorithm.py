@@ -111,7 +111,7 @@ class MJRagAlgorithm:
         Forward‑compatibility hook for subclasses; currently unused.
     """
 
-    rgx_sentence_limiter = re.compile(r"([\.\?!\n]+[\n ]+)")
+    rgx_sentence_limiter = re.compile(r"((?:[\.\?!\n][\n ]+)|(?:\n))")
     rgx_only_space = re.compile(r"^[\s\n]*$")
     rgx_md_point = re.compile(r"- (.*)\n")
 
@@ -244,6 +244,9 @@ class MJRagAlgorithm:
 
         # make the sections in row and without subsections
         sections = self._linearize_sections(sections)
+        if not sections:
+            return
+
         self._remove_subsections_in_sections(sections)
         self.logging_service.debug("After saving in linearization")
         self.logging_service.debug(json.dumps(sections, indent=2))
@@ -677,7 +680,8 @@ spacing and semantic.
 4. If you can't identify a header consider it is the same content.
 5. Recopy the content of each header AS IS. SUMMARIZATION NOT ALLOWED. Just fix punctuation and spacing issues.
 6. Your response will be parsed. Avoid any comment or json errors.
-7. RETURN a response in the following format:
+7. If there is no header present, propose your own header based on the content
+8. RETURN a response in the following format:
 
 [{{
   "header": "Top level header",
@@ -704,7 +708,7 @@ Text:
         encoding = tiktoken.encoding_for_model(self.embedding_service.model_name)
         tokens_count = len(encoding.encode(prompt))
         if tokens_count > 100000:
-            raise ValueError(f"f{tokens_count = }")
+            raise ValueError(f"TOO MANY TOKENS {tokens_count = }")
 
         errors = []
         for _ in range(5):
@@ -736,10 +740,13 @@ Text:
         if not markdown_content:
             raise ValueError("Empty content")
 
+        encoding = tiktoken.encoding_for_model(self.embedding_service.model_name)
+
         # split the content in sentences
         lines = [senten.strip() for senten in self.rgx_sentence_limiter.split(markdown_content)
                  if senten.strip()]
         for line in lines:
+            # tokens_count = len(encoding.encode(line))
             self.logging_service.debug(line)
 
         # build the sentences set
@@ -755,9 +762,13 @@ Text:
                     sentence = f"{sentence} {part}"
             sentences_set.append(sentence)
 
+        max_tokens_count = 0
         for sentence in sentences_set:
-            self.logging_service.debug(f"===> {sentence}")
+            tokens_count = len(encoding.encode(sentence))
+            max_tokens_count = max(max_tokens_count, tokens_count)
+            self.logging_service.debug(f"===> {tokens_count} {sentence}")
 
+        self.logging_service.info(f"{max_tokens_count = }")
         self.save_in_cache_content_sentences(hash, sentences_set)
         return hash, sentences_set
 
@@ -920,16 +931,28 @@ this question: {question}
             tokens_count = len(encoding.encode(sentences))
 
             if tmp_tokens_count + tokens_count > 250000:
-                vectors.extend(self.embedding_service.encode_documents(tmp_sentences))
-                tmp_sentences.clear()
-                tmp_sentences.append(sentences)
-                tmp_tokens_count = tokens_count
+                try:
+                    vectors.extend(self.embedding_service.encode_documents(tmp_sentences))
+                    tmp_sentences.clear()
+                    tmp_sentences.append(sentences)
+                    tmp_tokens_count = tokens_count
+                except Exception as e:
+                    if 'maximum context length is 8192' in str(e):
+                        # Find a way to split the text into smaller chunks and encode them separately
+                        pass
+                    raise e
             else:
                 tmp_sentences.append(sentences)
                 tmp_tokens_count += tokens_count
 
         if tmp_sentences:
-            vectors.extend(self.embedding_service.encode_documents(tmp_sentences))
+            try:
+                vectors.extend(self.embedding_service.encode_documents(tmp_sentences))
+            except Exception as e:
+                if 'maximum context length is 8192' in str(e):
+                    # Find a way to split the text into smaller chunks and encode them separately
+                    pass
+                raise e
 
         self.save_in_cache_content_embeddings(doc_hash, vectors)
         return vectors
@@ -971,6 +994,12 @@ this question: {question}
         res_json_str = results.as_list()[0][0]
         return json.loads(res_json_str)
 
+    def parse_llm_response_to_json_object(self, response: str) -> List[dict]:
+        nester_expr = originalTextFor(lineStart + nestedExpr("{", "}"))
+        results = nester_expr.search_string(response)
+        res_json_str = results.as_list()[0][0]
+        return json.loads(res_json_str)
+
     def _save_sections_in_sql_db(self, doc_hash: str, sections: List[dict]):
         for i, section in enumerate(sections):
             sql_doc_id = self.sql_db_service.add_header_content_in_sdb(
@@ -1005,3 +1034,19 @@ this question: {question}
         for i in range(len(sections)):
             sections[i].pop('subsections', None)
             sections[i].pop('content', None)
+
+    def fix_header_in_section(self, title: str, section: dict):
+        msg_content = f""""I have an article with title {title}.
+
+One of its section has been parsed to json like this
+
+{json.dumps(section, indent=2)}
+
+But as you can see the header is missing. Modify that json by setting the header based on 
+the content and return me the modified json."""
+
+        messages = [
+            {"role": "user", "content": msg_content}
+        ]
+        response = self.llm_service.complete_messages(messages)
+        resp = self.parse_llm_response_to_json_object(response)
